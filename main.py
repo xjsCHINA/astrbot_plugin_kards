@@ -10,19 +10,18 @@ import asyncio
 @register(
     name="kards_deck_screenshot",
     author="xjsCHINA",
-    description="艾特机器人并发送卡组代码生成截图",
+    description="识别卡组代码并生成截图（无需艾特）",
     version="1.0.0"
 )
 class KardsDeckScreenshotPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 获取机器人账号用于判断艾特
-        self.bot_account = context.bot_config.account
+        # 卡组构建器URL
         self.deck_builder_url = "https://www.kards.com/decks/deck-builder?hash="
-        self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
-        self.puppeteer_script = os.path.join(self.plugin_dir, "puppeteer.js")
+        # Puppeteer脚本路径
+        self.puppeteer_script = os.path.join(os.path.dirname(__file__), "puppeteer.js")
         
-        # 卡组代码正则模式
+        # 卡组代码正则模式（根据实际格式调整）
         self.deck_code_pattern = re.compile(r'%%[A-Za-z0-9|;]+')
 
     async def initialize(self):
@@ -30,21 +29,15 @@ class KardsDeckScreenshotPlugin(Star):
         if not os.path.exists(self.puppeteer_script):
             logger.error(f"未找到Puppeteer脚本: {self.puppeteer_script}")
         else:
-            logger.info("Kards卡组截图插件初始化完成")
+            logger.info("Kards卡组截图插件初始化完成（无需艾特，直接识别卡组代码）")
 
-    # 关键修复：使用@filter.all()替代@filter.at_me()
-    @filter.all()
+    @filter.all()  # 监听所有消息
     async def on_message(self, event: AstrMessageEvent):
-        """处理所有消息，检查是否需要生成卡组截图"""
-        # 检查是否是艾特机器人的消息（自定义实现）
-        if not self._is_at_me(event):
-            return  # 不是艾特机器人的消息，直接返回
-        
+        """处理所有消息，直接识别卡组代码"""
         # 尝试提取卡组代码
         deck_code = self._extract_deck_code(event.message_str)
         if not deck_code:
-            logger.info("未在消息中找到有效的卡组代码")
-            return
+            return  # 没有找到卡组代码，不处理
         
         # 生成并发送截图
         try:
@@ -59,19 +52,8 @@ class KardsDeckScreenshotPlugin(Star):
                 yield event.plain_result("无法生成卡组截图，请检查代码是否正确")
         except Exception as e:
             logger.error(f"处理截图请求时出错: {str(e)}")
-            yield event.plain_result("处理请求时发生错误")
-
-    def _is_at_me(self, event: AstrMessageEvent) -> bool:
-        """判断消息是否艾特了机器人（完全自定义实现）"""
-        # 方法1: 检查消息中的mentions字段
-        if hasattr(event, 'mentions') and isinstance(event.mentions, list):
-            return self.bot_account in event.mentions
-        
-        # 方法2: 检查消息文本中是否包含机器人账号
-        if str(self.bot_account) in event.message_str:
-            return True
-            
-        return False
+            # 可以选择不发送错误消息，避免干扰
+            # yield event.plain_result("处理请求时发生错误")
 
     def _extract_deck_code(self, message: str) -> str:
         """从消息中提取卡组代码"""
