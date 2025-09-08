@@ -1,120 +1,146 @@
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-import requests
-import re
-import subprocess
 import os
+import re
 import tempfile
+import subprocess
 import asyncio
 
-@register("kards_deck_screenshot", "YourName", "艾特机器人并发送卡组代码获取截图", "1.0.0")
+# 按照文档规范注册插件，包含必要的元信息
+@register(
+    name="kards_deck_screenshot",
+    author="xjsCHINA",
+    description="艾特机器人并发送卡组代码生成截图",
+    version="1.0.0"
+)
 class KardsDeckScreenshotPlugin(Star):
+    """Kards卡组截图插件
+    
+    当用户艾特机器人并发送包含特定格式的卡组代码时，
+    自动生成卡组截图并回复。
+    """
     def __init__(self, context: Context):
         super().__init__(context)
-        # Kards卡组构建器URL
-        self.deck_builder_url = "https://www.kards.com/decks/deck-builder?hash="
+        # 获取机器人账号（用于艾特检测）
+        self.bot_account = context.bot_config.account
+        # 卡组构建器基础URL
+        self.base_url = "https://www.kards.com/decks/deck-builder?hash="
+        # Puppeteer脚本路径（文档推荐使用相对路径）
+        self.script_path = os.path.join(os.path.dirname(__file__), "puppeteer.js")
+        # 卡组代码正则匹配模式（文档建议明确业务规则）
+        self.code_pattern = re.compile(r'%%[A-Za-z0-9|;]+')
         
-        # 调整Kards卡组代码的正则模式
-        self.deck_code_pattern = re.compile(r'%%[a-zA-Z0-9|;o0j4bQJKnW7X9AiR8F1]+')
-        
-        # 获取当前文件目录，构建puppeteer脚本路径
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        self.screenshot_script_path = os.path.join(current_dir, "puppeteer.js")
+        # 检查必要文件是否存在
+        if not os.path.exists(self.script_path):
+            logger.warning(f"未找到Puppeteer脚本: {self.script_path}")
 
     async def initialize(self):
-        """插件初始化"""
-        logger.info("Kards卡组截图截图插件已加载，等待艾特并发送卡组代码")
-        
-        # 检查截图截图脚本是否存在
-        if not os.path.exists(self.screenshot_script_path):
-            logger.warning(f"截图脚本不存在: {self.screenshot_script_path}")
-            logger.warning("请确保puppeteer.js与main.py在同一目录")
+        """插件初始化方法（文档要求的生命周期方法）"""
+        logger.info("KardsDeckScreenshotPlugin 初始化完成")
 
-    @filter.at_me()  # 只处理艾特机器人的消息
-    async def handle_deck_request(self, event: AstrMessageEvent):
-        """处理艾特消息中的卡组代码并生成截图"""
-        try:
-            # 从消息中提取卡组代码
-            message_content = event.message_str
-            match = self.deck_code_pattern.search(message_content)
+    @filter.all()  # 监听所有消息，符合文档的事件过滤方式
+    async def on_message(self, event: AstrMessageEvent):
+        """消息处理主方法
+        
+        按照文档规范，处理逻辑应清晰分离
+        """
+        # 检查是否满足处理条件：被艾特且包含卡组代码
+        if not self._is_triggered(event):
+            return
+        
+        # 提取卡组代码
+        deck_code = self._extract_deck_code(event.message_str)
+        if not deck_code:
+            return
+        
+        # 处理核心业务：生成截图并回复
+        await self._process_deck_request(event, deck_code)
+
+    def _is_triggered(self, event: AstrMessageEvent) -> bool:
+        """判断是否触发插件处理
+        
+        私有方法以下划线开头，符合文档的代码规范
+        """
+        # 检查是否被艾特
+        if not self._is_mentioned(event):
+            return False
             
-            if match:
-                deck_code = match.group(0)
-                logger.info(f"收到艾特消息，识别到卡组代码: {deck_code}")
-                
-                # 生成完整的卡组构建器URL
-                encoded_code = requests.utils.quote(deck_code)
-                full_url = f"{self.deck_builder_url}{encoded_code}"
-                logger.info(f"卡组URL: {full_url}")
-                
-                # 调用Puppeteer脚本生成截图
-                image_data = await self.generate_screenshot(full_url)
-                
-                if image_data:
-                    yield event.image_result(image_data)
-                else:
-                    yield event.plain_result("无法生成卡组图片，请稍后再试")
+        # 检查消息中是否包含卡组代码
+        if not self.code_pattern.search(event.message_str):
+            return False
+            
+        return True
+
+    def _is_mentioned(self, event: AstrMessageEvent) -> bool:
+        """判断机器人是否被艾特
+        
+        实现文档中提到的艾特检测机制
+        """
+        # 优先检查mentions字段（文档推荐的方式）
+        if hasattr(event, 'mentions') and isinstance(event.mentions, list):
+            return self.bot_account in event.mentions
+            
+        # 兼容文本形式的艾特
+        return str(self.bot_account) in event.message_str
+
+    def _extract_deck_code(self, message: str) -> str:
+        """提取卡组代码"""
+        match = self.code_pattern.search(message)
+        return match.group(0) if match else None
+
+    async def _process_deck_request(self, event: AstrMessageEvent, deck_code: str):
+        """处理卡组请求的核心逻辑"""
+        try:
+            # 生成截图
+            image_path = await self._generate_screenshot(deck_code)
+            
+            if image_path and os.path.getsize(image_path) > 0:
+                # 发送图片（符合文档的响应方式）
+                with open(image_path, 'rb') as f:
+                    yield event.image_result(f.read())
+                # 清理临时文件
+                os.remove(image_path)
             else:
-                # 如果没有识别到卡组代码，提示用户正确格式
-                yield event.plain_result("请在艾特我时附上有效的Kards卡组代码，例如：\n@机器人 %%45|o0o5j4;bQbJbKnW7Kbs;7X9AiRbN;847Fo1")
+                yield event.plain_result("生成卡组截图失败：未获取到有效图片")
                 
         except Exception as e:
-            logger.error(f"处理卡组时出错: {str(e)}")
+            logger.error(f"处理卡组请求出错: {str(e)}", exc_info=True)
             yield event.plain_result("处理请求时发生错误，请稍后再试")
 
-    async def generate_screenshot(self, url):
-        """调用Puppeteer脚本生成截图"""
+    async def _generate_screenshot(self, deck_code: str) -> str:
+        """调用Puppeteer生成截图"""
         try:
-            # 创建临时文件保存截图
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                temp_filename = tmp_file.name
+            # 创建临时文件（文档建议的临时文件处理方式）
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                temp_path = tmp.name
             
-            # 检查Node.js是否安装
-            node_check = subprocess.run(
-                ['node', '--version'],
-                capture_output=True,
-                text=True
-            )
-            if node_check.returncode != 0:
-                logger.error("未检测到Node.js，请先安装Node.js")
-                return None
+            # 构建完整URL
+            full_url = f"{self.base_url}{deck_code}"
             
-            # 调用外部Node.js脚本进行截图
-            result = subprocess.run(
-                ['node', self.screenshot_script_path, url, temp_filename],
+            # 调用外部脚本（文档允许的外部程序调用方式）
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ['node', self.script_path, full_url, temp_path],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=30  # 增加超时控制
             )
             
-            if result.returncode == 0 and os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
-                # 读取截图文件内容
-                with open(temp_filename, 'rb') as f:
-                    image_data = f.read()
-                
-                # 清理临时文件
-                os.unlink(temp_filename)
-                return image_data
-            else:
-                logger.error(f"截图脚本执行失败: {result.stderr}")
+            if result.returncode != 0:
+                logger.error(f"Puppeteer执行失败: {result.stderr}")
                 return None
                 
+            return temp_path if os.path.exists(temp_path) else None
+            
         except subprocess.TimeoutExpired:
-            logger.error("截图超时")
+            logger.error("生成截图超时")
             return None
         except Exception as e:
-            logger.error(f"截图过程出错: {str(e)}")
+            logger.error(f"截图生成过程出错: {str(e)}")
             return None
-        finally:
-            # 确保临时文件被清理
-            if 'temp_filename' in locals() and os.path.exists(temp_filename):
-                try:
-                    os.unlink(temp_filename)
-                except:
-                    pass
 
     async def terminate(self):
-        """插件停止时调用"""
-        logger.info("Kards卡组截图插件已停止")
+        """插件终止方法（文档要求的生命周期方法）"""
+        logger.info("KardsDeckScreenshotPlugin 已终止")
     
