@@ -16,10 +16,9 @@ import asyncio
 class KardsDeckScreenshotPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
-        # 从上下文获取机器人账号
+        # 获取机器人账号用于判断艾特
         self.bot_account = context.bot_config.account
         self.deck_builder_url = "https://www.kards.com/decks/deck-builder?hash="
-        # 获取当前文件所在目录
         self.plugin_dir = os.path.dirname(os.path.abspath(__file__))
         self.puppeteer_script = os.path.join(self.plugin_dir, "puppeteer.js")
         
@@ -28,16 +27,16 @@ class KardsDeckScreenshotPlugin(Star):
 
     async def initialize(self):
         """插件初始化"""
-        # 检查Puppeteer脚本是否存在
         if not os.path.exists(self.puppeteer_script):
             logger.error(f"未找到Puppeteer脚本: {self.puppeteer_script}")
         else:
             logger.info("Kards卡组截图插件初始化完成")
 
-    @filter.all()  # 监听所有消息事件
+    # 关键修复：使用@filter.all()替代@filter.at_me()
+    @filter.all()
     async def on_message(self, event: AstrMessageEvent):
         """处理所有消息，检查是否需要生成卡组截图"""
-        # 检查是否是艾特机器人的消息
+        # 检查是否是艾特机器人的消息（自定义实现）
         if not self._is_at_me(event):
             return  # 不是艾特机器人的消息，直接返回
         
@@ -63,8 +62,8 @@ class KardsDeckScreenshotPlugin(Star):
             yield event.plain_result("处理请求时发生错误")
 
     def _is_at_me(self, event: AstrMessageEvent) -> bool:
-        """判断消息是否艾特了机器人"""
-        # 方法1: 检查消息中的mentions字段（官方推荐方式）
+        """判断消息是否艾特了机器人（完全自定义实现）"""
+        # 方法1: 检查消息中的mentions字段
         if hasattr(event, 'mentions') and isinstance(event.mentions, list):
             return self.bot_account in event.mentions
         
@@ -104,7 +103,6 @@ class KardsDeckScreenshotPlugin(Star):
                 logger.error(f"Puppeteer执行失败: {stderr.decode('utf-8')}")
                 return None
                 
-            # 检查文件是否存在且不为空
             if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
                 return temp_path
             else:
