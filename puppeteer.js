@@ -1,11 +1,11 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
-// 从命令行获取参数
+// 从命令行参数获取URL和输出文件路径
 const [url, outputPath] = process.argv.slice(2);
 
 if (!url || !outputPath) {
-    console.error('缺少参数: 需要URL和输出文件路径');
+    console.error('缺少参数：需要URL和输出文件路径');
     process.exit(1);
 }
 
@@ -24,22 +24,26 @@ async function takeScreenshot() {
             timeout: 60000
         });
 
-        // 创建页面
+        // 创建新页面
         const page = await browser.newPage();
-        await page.setViewport({ width: 1200, height: 1000 });
         
-        // 导航到目标页面
-        await page.goto(url, {
+        // 设置页面大小
+        await page.setViewport({ width: 1200, height: 900 });
+        
+        // 导航到目标URL
+        await page.goto(url, { 
             waitUntil: 'networkidle2',
             timeout: 60000
         });
         
-        // 等待卡组加载完成（根据实际页面调整选择器）
-        await page.waitForSelector('.deck-content', { timeout: 30000 });
-        await new Promise(resolve => setTimeout(resolve, 3000)); // 额外等待
+        // 等待卡组加载完成（根据页面实际情况调整选择器）
+        await page.waitForSelector('.deck-container', { timeout: 15000 });
         
-        // 截取卡组区域
-        const deckElement = await page.$('.deck-content');
+        // 等待额外时间让图片加载
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        
+        // 获取卡组区域并截图
+        const deckElement = await page.$('.deck-container');
         if (deckElement) {
             await deckElement.screenshot({ path: outputPath });
         } else {
@@ -47,21 +51,20 @@ async function takeScreenshot() {
             await page.screenshot({ path: outputPath, fullPage: true });
         }
         
-        // 验证截图
         if (fs.existsSync(outputPath) && fs.statSync(outputPath).size > 0) {
             console.log('截图成功');
             process.exit(0);
         } else {
-            console.error('截图文件无效');
+            console.error('截图文件生成失败');
             process.exit(1);
         }
         
     } catch (error) {
-        console.error('截图失败:', error.message);
+        console.error('截图失败:', error);
         process.exit(1);
     } finally {
         if (browser) {
-            await browser.close().catch(err => console.error('关闭浏览器失败:', err));
+            await browser.close();
         }
     }
 }
